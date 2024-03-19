@@ -2,9 +2,11 @@
 /*
 Plugin Name: Alfasoft Manager
 Description: A plugin to manage people and their contacts.
-Version: 1.0
+Version: 1.1
 Author: Ricardo Remédio
 */
+
+ob_start();
 if (!defined("ABSPATH")) {
     exit();
 }
@@ -41,7 +43,8 @@ function create_person_contact_tables()
     $people_table = $wpdb->prefix . "people";
     $contacts_table = $wpdb->prefix . "contacts";
 
-    $sql = "CREATE TABLE $people_table (
+    // SQL statement for creating the people table
+    $sql_people = "CREATE TABLE $people_table (
         id mediumint(9) NOT NULL AUTO_INCREMENT,
         name varchar(255) NOT NULL,
         email varchar(255) NOT NULL,
@@ -49,27 +52,41 @@ function create_person_contact_tables()
         PRIMARY KEY (id)
     ) $charset_collate;";
 
-    $sql .= "CREATE TABLE $contacts_table (
+    // SQL statement for creating the contacts table
+    $sql_contacts = "CREATE TABLE $contacts_table (
         id mediumint(9) NOT NULL AUTO_INCREMENT,
         person_id mediumint(9) NOT NULL,
         country_code varchar(5) NOT NULL,
         number varchar(9) NOT NULL,
         PRIMARY KEY (id),
-        deleted BOOLEAN DEFAULT 0,
-        FOREIGN KEY (person_id) REFERENCES $people_table(id)
+        deleted BOOLEAN DEFAULT 0
     ) $charset_collate;";
 
+    // Execute the SQL statements to create the tables
     require_once ABSPATH . "wp-admin/includes/upgrade.php";
-    dbDelta($sql);
+    dbDelta($sql_people);
+    dbDelta($sql_contacts);
+
+    // Check if the foreign key constraint already exists
+    $foreign_key_exists = $wpdb->get_var("SELECT COUNT(*) FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_NAME = '$contacts_table' AND CONSTRAINT_NAME = 'fk_person_id';");
+
+    if (!$foreign_key_exists) {
+        // Add foreign key constraint
+        $sql_foreign_key = "ALTER TABLE $contacts_table
+                            ADD CONSTRAINT fk_person_id
+                            FOREIGN KEY (person_id)
+                            REFERENCES $people_table(id);";
+        $wpdb->query($sql_foreign_key);
+    }
 
     // Add unique constraint to the email field in the people table
     $wpdb->query("ALTER TABLE $people_table ADD UNIQUE (email)");
 
     // Add unique constraint to the combination of country_code and number in the contacts table
-    $wpdb->query(
-        "ALTER TABLE $contacts_table ADD UNIQUE (country_code, number)"
-    );
+    $wpdb->query("ALTER TABLE $contacts_table ADD UNIQUE (country_code, number)");
 }
+
+    
 
 register_activation_hook(__FILE__, "create_person_contact_tables");
 
@@ -485,22 +502,20 @@ function render_manage_contact_page()
     echo '<form method="post">';
     echo '<label for="country_code">Country:</label>';
     echo '<select id="country_code" name="country_code" required>';
-    foreach ($countries as $country) {
-        // Access the root calling code and any suffixes
-        $root = $country["idd"]["root"];
-        $suffixes = implode(", ", $country["idd"]["suffixes"]);
+   foreach ($countries as $country) {
+    // Check if the keys exist and provide default values if not
+    $root = $country["idd"]["root"] ?? '';
+    $suffixes = $country["idd"]["suffixes"] ?? [];
 
-        // Combine the root and suffixes into a single string for display
-        $callingCode = $root . " " . $suffixes . "";
+    // Combine the root and suffixes into a single string for display
+    // Ensure suffixes is an array before calling implode
+    $callingCode = $root . " " . implode(", ", (array)$suffixes);
 
-        echo '<option value="' .
-            esc_attr($callingCode) .
-            '">' .
-            $country["name"]["common"] .
-            " (" .
-            esc_html($callingCode) .
-            ")</option>";
-    }
+    // Check if the current country code matches the existing contact's country code
+    $selected = $callingCode == $contact->country_code ? "selected" : "";
+
+    echo '<option value="' . esc_attr($callingCode) . '" ' . $selected . ">" . $country["name"]["common"] . " (" . esc_html($callingCode) . ")</option>";
+}
     echo "</select>";
     echo '<label for="number">Number:</label>';
     echo '<input type="tel" id="number" name="number" pattern="\d{9}" required>';
@@ -655,7 +670,6 @@ function alfasoft_manager_list_shortcode()
 
     return $output;
 }
-
 add_shortcode("alfasoft_manager_list", "alfasoft_manager_list_shortcode");
+ob_end_flush(); 
 ?>
-
